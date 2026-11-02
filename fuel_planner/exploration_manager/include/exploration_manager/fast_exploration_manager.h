@@ -87,6 +87,8 @@ namespace fast_planner
     // [MODIFIED BY CODEX]: Local LKH is restricted by the candidate set, not
     // by a post-solve distance/node-count truncation.
     int local_tsp_candidate_num_ = 10;
+    // [ABLATION]: true=起始代价包含“下一待访问网格方向”项（默认）；false=该项恒 0
+    bool use_grid_guidance_ = true;
     int grid_decision_round_ = 0;
     int active_grid_id_ = -1;
     int active_root_grid_id_ = -1;

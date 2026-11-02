@@ -23,6 +23,9 @@
   <arg name="max_vel"/>
   <arg name="max_acc"/>
 
+  <!-- [ABLATION] 每次运行的独立日志目录；由外层 launch 传入 -->
+  <arg name="log_dir" default="/home/djg/Data_debug"/>
+
   <!-- main node -->
   <node pkg="exploration_manager" name="exploration_node" type="exploration_node" output="screen">
     <remap from ="/odom_world" to="$(arg odometry_topic)"/>
@@ -119,6 +122,14 @@
     <param name="grid_planner/use_legacy_connectivity" value="true" type="bool"/>
     <!-- [MODIFIED BY CODEX]: 连通性(CCL)主开关（消融实验）；false=关闭FALCON式连通分解 -->
     <param name="grid_planner/use_ccl" value="true" type="bool"/>
+    <!-- [ABLATION] 连通约束拆成两个单点开关：
+         use_ccl_for_filter = 同网格异分量前沿不参与本轮局部排序（论文算法1）
+         use_ccl_for_center = 网格代表位置取最大连通分量质心
+         “去掉连通约束”配置：两者同时置 false。 -->
+    <param name="grid_planner/use_ccl_for_filter" value="true" type="bool"/>
+    <param name="grid_planner/use_ccl_for_center" value="true" type="bool"/>
+    <!-- [ABLATION] 连通切片维数：2d=中间高度水平切片（默认），3d=包围盒内三维连通 -->
+    <param name="grid_planner/slice_dim" value="2d" type="string"/>
     <param name="grid_planner/enable_dynamic_subdivision" value="true" type="bool"/>
     <param name="grid_planner/use_rush_subregions" value="true" type="bool"/>
     <param name="grid_planner/subdivide_only_current_grid" value="true" type="bool"/>
@@ -200,7 +211,7 @@
     <param name="exploration/residual_defer_max_coverage" value="0.30" type="double"/>
     <param name="exploration/residual_defer_max_path" value="7.5" type="double"/>
     <param name="exploration/enable_grid_select_log" value="true" type="bool"/>
-    <param name="exploration/grid_select_log_path" value="/home/djg/Data_debug/grid_select_log.csv" type="string"/>
+    <param name="exploration/grid_select_log_path" value="$(arg log_dir)/grid_select_log.csv" type="string"/>
     <!-- [MODIFIED BY CODEX]: Pair-level diagnostics produced several MB and
          three synchronous flushes per replan. Keep the logger available but
          disable it during normal exploration timing tests. -->
@@ -209,15 +220,17 @@
          (time-equivalent).  Keep the existing calibrated value at 0.8; this
          structural integration does not retune its weight. -->
     <param name="exploration/local_pocket_weight" value="0.8" type="double"/>
-    <param name="exploration/local_tsp_cost_log_path" value="/home/djg/Data_debug/local_tsp_cost_log.csv" type="string"/>
+    <!-- [ABLATION] 下一待访问网格方向引导开关：false 时起始代价中的方向项恒为 0 -->
+    <param name="exploration/use_grid_guidance" value="true" type="bool"/>
+    <param name="exploration/local_tsp_cost_log_path" value="$(arg log_dir)/local_tsp_cost_log.csv" type="string"/>
     <param name="exploration/enable_decision_trace_log" value="true" type="bool"/>
-    <param name="exploration/decision_trace_log_path" value="/home/djg/Data_debug/decision_trace_log.csv" type="string"/>
+    <param name="exploration/decision_trace_log_path" value="$(arg log_dir)/decision_trace_log.csv" type="string"/>
     <param name="exploration/enable_stats_log" value="true" type="bool"/>
     <!-- [MODIFIED BY CODEX]: event-only planner timing for B-spline handoff diagnosis. -->
     <param name="exploration/enable_fsm_handoff_log" value="true" type="bool"/>
-    <param name="exploration/fsm_handoff_log_path" value="/home/djg/Data_debug/fsm_handoff_log.csv" type="string"/>
+    <param name="exploration/fsm_handoff_log_path" value="$(arg log_dir)/fsm_handoff_log.csv" type="string"/>
     <!-- [MODIFIED]: stats_log 路径改指 Proposed/gazebo场景2/实验数据.csv -->
-    <param name="exploration/stats_log_path" value="/home/djg/Data_debug/Proposed/gazebo场景2/实验数据.csv" type="string"/>
+    <param name="exploration/stats_log_path" value="$(arg log_dir)/exploration_stats.csv" type="string"/>
     <param name="exploration/local_tsp_block_cost" value="5000.0" type="double"/>
     <param name="exploration/local_tsp_path_sample_step" value="0.2" type="double"/>
     <param name="exploration/local_tsp_first_cost_ratio" value="1.3" type="double"/>
@@ -230,11 +243,11 @@
     <!-- Diagnostics: enable per-frontier logs during debugging.
          They are verbose, but necessary to trace missed closeouts and detours. -->
     <param name="frontier/enable_frontier_track_log" value="true" type="bool"/>
-    <param name="frontier/frontier_track_log_path" value="/home/djg/Data_debug/frontier_track_log.csv" type="string"/>
+    <param name="frontier/frontier_track_log_path" value="$(arg log_dir)/frontier_track_log.csv" type="string"/>
     <param name="frontier/enable_local_view_log" value="true" type="bool"/>
-    <param name="frontier/local_view_log_path" value="/home/djg/Data_debug/local_view_log.csv" type="string"/>
+    <param name="frontier/local_view_log_path" value="$(arg log_dir)/local_view_log.csv" type="string"/>
     <param name="frontier/enable_start_cost_log" value="true" type="bool"/>
-    <param name="frontier/start_cost_log_path" value="/home/djg/Data_debug/start_cost_log.csv" type="string"/>
+    <param name="frontier/start_cost_log_path" value="$(arg log_dir)/start_cost_log.csv" type="string"/>
 
     <!-- V10 遗忘检测参数 -->
     <param name="frontier/forget_thresh_low" value="0.22" type="double"/>
@@ -253,6 +266,9 @@
     <param name="frontier/regret_lambda2" value="0.2" type="double"/>
     <!-- [MODIFIED BY CODEX]: 结构评价主开关（消融实验）；false=关闭整个结构评价机制 -->
     <param name="frontier/enable_structure_eval" value="true" type="bool"/>
+    <!-- [ABLATION] 受限结构评分中后向射线项权重 alpha，式(11) Cr = alpha*ray + (1-alpha)*density
+         0.7=基线（与改动前硬编码一致）；1.0=仅后向射线；0.0=仅邻域障碍密度 -->
+    <param name="frontier/alpha" value="0.7" type="double"/>
 
     <!-- V10 路径膨胀覆盖参数 -->
     <param name="frontier/inflate_radius" value="5.5" type="double"/>

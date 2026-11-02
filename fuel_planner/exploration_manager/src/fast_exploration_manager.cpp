@@ -207,6 +207,8 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   // [MODIFIED BY CODEX]: Local look-ahead is deliberately small.  It is a
   // planning aid, never a queued flight command.
   nh.param("exploration/local_tsp_candidate_num", local_tsp_candidate_num_, 10);
+  // [ABLATION]: 下一待访问网格方向引导总开关（去掉方向引导配置用）
+  nh.param("exploration/use_grid_guidance", use_grid_guidance_, true);
 
   if (enable_grid_select_log_) {
     grid_select_log_file_.open(grid_select_log_path_, std::ios::out);
@@ -875,6 +877,37 @@ int FastExplorationManager::planExploreMotion(
   }
   ROS_INFO("[LocalStartCost] original_bounded_astar_all=%zu", candidate_fids.size());
 
+  // [ABLATION]: 论文算法 1 第 17 行——同网格但分属不同连通分量的前沿
+  // 本轮不参与局部排序。仅在 grid_planner/use_ccl_for_filter=true 时生效；
+  // 关闭后即为“去掉连通约束”配置。
+  int ccl_filtered_num = 0;
+  if (grid_planner_->cclFilterEnabled() && !candidate_fids.empty()) {
+    vector<int> allowed_fids;
+    allowed_fids.reserve(candidate_fids.size());
+    for (int fid : candidate_fids) {
+      const int gid = grid_planner_->getGridContainingPoint(ed_->points_[fid]);
+      const Frontier* ftr = frontier_finder_->getFrontierById(fid);
+      const Vector3d ftr_pos = (ftr != nullptr) ? ftr->average_ : ed_->points_[fid];
+      if (grid_planner_->componentAllowsFrontier(gid, ftr_pos, pos)) {
+        allowed_fids.push_back(fid);
+      } else {
+        ++ccl_filtered_num;
+        candidate_start_path_lengths.erase(fid);
+        candidate_start_motion_costs.erase(fid);
+      }
+    }
+    if (!allowed_fids.empty()) {
+      candidate_fids.swap(allowed_fids);
+    } else {
+      // 安全兜底：全部被筛时保留原候选，避免人为制造 NO_FRONTIER
+      ROS_WARN("[CCLFilter] all %d candidates rejected, keep original set",
+               static_cast<int>(candidate_fids.size()));
+      ccl_filtered_num = 0;
+    }
+    ROS_INFO("[CCLFilter] candidates=%d, filtered_by_component=%d",
+             static_cast<int>(candidate_fids.size()), ccl_filtered_num);
+  }
+
   ed_->grid_frontier_ids_ = candidate_fids;
 
   // --- Step 3: Get next grid for RUSH-style gradient guidance ---
@@ -924,8 +957,9 @@ int FastExplorationManager::planExploreMotion(
 
     // The planner minimizes score, so a frontier aligned with the next global
     // grid reduces the score.
+    // [ABLATION]: exploration/use_grid_guidance=false 时该项恒为 0
     double gradient = 0.0;
-    if (has_next_grid) {
+    if (has_next_grid && use_grid_guidance_) {
       double dv = std::max(0.5, (frontier_center - next_grid_center).norm());
       gradient = std::min(2.0, 1.0 / (dv * dv));
     }

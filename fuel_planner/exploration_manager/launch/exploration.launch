@@ -8,6 +8,9 @@
   <arg name="init_y" value="0"/>
   <arg name="init_z" value="1.0"/> 
 
+  <!-- [ABLATION] 每次运行的独立日志目录（由批量脚本传入） -->
+  <arg name="log_dir" default="/home/djg/Data_debug"/>
+
   <!-- topic of your odometry such as VIO or LIO -->
   <!-- <arg name="odom_topic" value="/state_ukf/odom" /> -->
 
@@ -39,6 +42,7 @@
     <arg name="box_max_z" value=" 2.0"/> -->
 
     <arg name="odometry_topic" value="$(arg odom_topic)"/>
+    <arg name="log_dir" value="$(arg log_dir)"/>
     <!-- sensor pose: transform of camera frame in the world frame -->
 
 
@@ -70,7 +74,7 @@
     <arg name="fy" value="319.9348"/>
 
     <!-- maximum velocity and acceleration the drone will reach -->
-    <arg name="max_vel" value="0.8" />
+  <arg name="max_vel" value="0.8" />
     <arg name="max_acc" value="0.8" />
   </include>
 
@@ -86,7 +90,7 @@
     <param name="traj_server/init_z" value="$(arg init_z)" type="double"/>
     <!-- [MODIFIED BY CODEX]: separate server-side handoff event log. -->
     <param name="enable_handoff_log" value="true" type="bool"/>
-    <param name="handoff_log_path" value="/home/djg/Data_debug/traj_server_handoff_log.csv" type="string"/>
+    <param name="handoff_log_path" value="$(arg log_dir)/traj_server_handoff_log.csv" type="string"/>
 
     <param name="perception_utils/top_angle" value="0.56125" type="double"/>
     <param name="perception_utils/left_angle" value="0.69222" type="double"/>

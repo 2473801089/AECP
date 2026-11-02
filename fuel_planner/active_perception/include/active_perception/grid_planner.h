@@ -156,6 +156,8 @@ public:
   // --- CCL (Connected Component Labeling) — FALCON-style connectivity ---
   // Run CCL flood-fill on a single grid cell to detect obstacle-split components.
   void runCCLInGrid(int grid_id);
+  // [ABLATION]: 三维连通分量（slice_dim=3d），不下采样高度，26/6 邻域沿 z 扩展。
+  void runCCLInGrid3D(int grid_id);
   // Update which component the drone is in for all active grids.
   void updateDroneComponent(const Vector3d& drone_pos);
   // Find which component a 3D point belongs to in a given grid.
@@ -166,6 +168,15 @@ public:
   void detectIsolatedComponents(const Vector3d& drone_pos);
   // Check if two grids/components are in the same connected region.
   bool componentsShareConnectivity(int gid1, int cid1, int gid2, int cid2);
+
+  // [ABLATION]: 论文算法 1 第 17 行的“同网格不同连通分量前沿不参与本轮竞争”。
+  // 参考分量取“无人机所在侧”的分量：无人机在该网格内时用 drone_component_id_，
+  // 否则取分量中心距无人机最近者（近似无人机进入该网格后所处的一侧）。
+  // 返回 true 表示该前沿被允许参与本轮局部排序。
+  bool componentAllowsFrontier(int grid_id, const Vector3d& ftr_pos,
+                               const Vector3d& drone_pos) const;
+  bool cclFilterEnabled() const { return use_ccl_for_filter_; }
+  bool cclCenterEnabled() const { return use_ccl_for_center_; }
 
   bool findGridAnchorById(int grid_id, Vector3d& anchor);
   void clusterRegions();
@@ -270,7 +281,14 @@ private:
   int ccl_step_ = 2;                  // sub-sampling step for CCL scanning
   double ccl_clearance_thresh_ = 0.5; // ESDF threshold: FREE voxel must have >0.5m clearance
   int ccl_min_component_voxels_ = 10; // filter out noise: components smaller than this
-  bool use_ccl_ = true;               // enable/disable CCL connectivity decomposition
+  // [ABLATION]: 原 use_ccl_ 一个开关同时控制“分量筛选”和“网格代表位置修正”，
+  // 无法做单点消融，现拆成两个开关；保留 use_ccl_ 作为总开关（false 时两者全关）。
+  bool use_ccl_ = true;               // master switch (kept for backward compatibility)
+  bool use_ccl_for_filter_ = true;    // 分量筛选：同网格异分量前沿不参与本轮竞争
+  bool use_ccl_for_center_ = true;    // 分量修正：网格代表位置取最大分量质心
+  // [ABLATION]: 切片维数。"2d"=中间高度水平切片（默认）；"3d"=包围盒内三维连通，不下采样高度
+  std::string slice_dim_str_ = "2d";
+  bool use_slice_3d_ = false;
 
   unordered_set<int> covered_voxel_addrs_;
   Vector3d last_coverage_pos_ = Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());

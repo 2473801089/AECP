@@ -61,6 +61,8 @@ FrontierFinder::FrontierFinder(const EDTEnvironment::Ptr& edt, ros::NodeHandle& 
 
   // [MODIFIED BY CODEX]: 结构评价主开关（消融实验用），XML 中 frontier/enable_structure_eval 可切换
   nh.param("frontier/enable_structure_eval", enable_structure_eval_, true);
+  // [ABLATION]: 射线项权重 alpha，默认 0.7 保持与改动前硬编码 0.70/0.30 完全一致
+  nh.param("frontier/alpha", structure_alpha_, 0.7);
 
   // ==================== 局部 coverage + structure closeout 参数 ====================
   nh.param("frontier/purge_min_cells", purge_min_cells_, 10);
@@ -2177,13 +2179,22 @@ void FrontierFinder::computeBackLeakPocketEvidence(Frontier& f) {
   // 障碍密度: frontier周边已观测障碍物比例 (辅助, 当Bottom Ray因墙未映射而失效时提供信号)
   f.back_obstacle_ratio_ = std::min(std::max(f.obstacle_density_, 0.0), 1.0);
 
-  // 综合口袋得分: Bottom Ray主导 + 障碍密度辅助
-  f.bounded_pocket_score_ = std::min(std::max(
-      0.70 * best_cs + 0.30 * f.back_obstacle_ratio_, 0.0), 1.0);
+  // [ABLATION]: 式(11) Cr = alpha*ray + (1-alpha)*density
+  // alpha=0.7 时与改动前的 0.70/0.30 数值完全一致；alpha=1 只保留后向射线，
+  // alpha=0 只保留邻域障碍密度。
+  const double alpha = std::min(std::max(structure_alpha_, 0.0), 1.0);
+  const double w_ray = alpha;
+  const double w_density = 1.0 - alpha;
 
-  // 口袋标记: Bottom Ray触墙近(cs>=0.4) 或 高障碍密度(>=0.5)
-  f.bounded_pocket_flag_ =
-      (best_cs >= 0.40) || (f.back_obstacle_ratio_ >= 0.50);
+  // 综合口袋得分: 后向射线 + 邻域障碍密度
+  f.bounded_pocket_score_ = std::min(std::max(
+      w_ray * best_cs + w_density * f.back_obstacle_ratio_, 0.0), 1.0);
+
+  // 口袋标记: 两个判据都跟随权重，保证 alpha=1 时密度项完全不参与、
+  // alpha=0 时后向射线项完全不参与（否则单项消融不彻底）。
+  const bool ray_flag = (w_ray > 1e-6) && (best_cs >= 0.40);
+  const bool density_flag = (w_density > 1e-6) && (f.back_obstacle_ratio_ >= 0.50);
+  f.bounded_pocket_flag_ = ray_flag || density_flag;
 }
 
 // ====================  体素簇几何特征评分 ====================

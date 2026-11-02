@@ -266,6 +266,9 @@ namespace fast_planner
     double regret_lambda1_, regret_lambda2_;
     // [MODIFIED BY CODEX]: 结构评价主开关，消融实验用；true=启用(默认)，false=关闭整个结构评价机制
     bool enable_structure_eval_ = true;
+    // [ABLATION]: 受限结构评分中后向射线项权重 alpha（式(11) Cr = alpha*ray + (1-alpha)*density）。
+    // 默认 0.7，与改动前硬编码的 0.70/0.30 完全一致；1.0=仅后向射线，0.0=仅邻域障碍密度。
+    double structure_alpha_ = 0.7;
     double local_closeout_radius_;
     bool force_local_sweep_;
     int local_sweep_min_frontiers_;

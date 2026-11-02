@@ -70,6 +70,17 @@ GridPlanner::GridPlanner(const shared_ptr<EDTEnvironment>& edt, ros::NodeHandle&
 
   // CCL parameters (adapted from FALCON)
   nh.param("grid_planner/use_ccl", use_ccl_, true);
+  // [ABLATION]: 把“连通约束”拆成两个可独立消融的开关。
+  // use_ccl_for_filter: 同网格异分量前沿不参与本轮局部排序（论文算法 1 第 17 行）
+  // use_ccl_for_center: 网格代表位置取最大连通分量质心
+  nh.param("grid_planner/use_ccl_for_filter", use_ccl_for_filter_, true);
+  nh.param("grid_planner/use_ccl_for_center", use_ccl_for_center_, true);
+  nh.param("grid_planner/slice_dim", slice_dim_str_, std::string("2d"));
+  if (!use_ccl_) {
+    use_ccl_for_filter_ = false;
+    use_ccl_for_center_ = false;
+  }
+  use_slice_3d_ = (slice_dim_str_ == "3d" || slice_dim_str_ == "3D");
   nh.param("grid_planner/ccl_step", ccl_step_, 2);
   nh.param("grid_planner/ccl_clearance_thresh", ccl_clearance_thresh_, 0.5);
   nh.param("grid_planner/ccl_min_component_voxels", ccl_min_component_voxels_, 10);
@@ -888,7 +899,7 @@ void GridPlanner::updateGrids(const Vector3d& cur_pos) {
   }
 
   // CCL: update drone component for all active grids
-  if (use_ccl_) updateDroneComponent(cur_pos);
+  if (use_ccl_for_filter_ || use_ccl_for_center_) updateDroneComponent(cur_pos);
 
   // [MODIFIED BY CODEX]: inputFrontiersDetailed() runs immediately after
   // updateGrids() and clusters regions after mapping the current frontiers.
@@ -983,9 +994,10 @@ void GridPlanner::updateGridCell(int grid_id) {
   }
 
   // CCL: detect obstacle-split components (FALCON-style connectivity decomposition)
-  if (use_ccl_ && g.status_ == GridCell::EFFECTIVE_UNKNOWN && g.free_num_ > 0) {
+  const bool ccl_needed = use_ccl_for_filter_ || use_ccl_for_center_;
+  if (ccl_needed && g.status_ == GridCell::EFFECTIVE_UNKNOWN && g.free_num_ > 0) {
     runCCLInGrid(grid_id);
-  } else if (use_ccl_) {
+  } else if (ccl_needed) {
     // Clear stale CCL data when grid leaves EFFECTIVE_UNKNOWN state
     g.components_.clear();
     g.drone_component_id_ = -1;
@@ -1055,7 +1067,8 @@ void GridPlanner::inputFrontiersDetailed(const vector<Vector3d>& avgs,
     all_grids_[gid].contained_frontier_ids_[fid] = 1;
 
     // CCL: also assign frontier to its connected component
-    if (use_ccl_ && !all_grids_[gid].components_.empty()) {
+    if ((use_ccl_for_filter_ || use_ccl_for_center_) &&
+        !all_grids_[gid].components_.empty()) {
       int comp = findComponentForPoint(gid, avgs[fid]);
       if (comp >= 0 && comp < static_cast<int>(all_grids_[gid].components_.size())) {
         all_grids_[gid].components_[comp].frontier_ids_.push_back(fid);
@@ -1601,6 +1614,12 @@ void GridPlanner::publishGlobalTour(const vector<Vector3d>& tour_path,
 // Source: /home/djg/FALCON/src/FALCON/falcon_planner/exploration_preprocessing/src/hierarchical_grid.cpp
 
 void GridPlanner::runCCLInGrid(int grid_id) {
+  // [ABLATION]: 3D 连通在同一包围盒内做三维标记，不下采样高度
+  if (use_slice_3d_) {
+    runCCLInGrid3D(grid_id);
+    return;
+  }
+
   GridCell& g = all_grids_[grid_id];
   g.components_.clear();
   g.is_split_ = false;
@@ -1699,7 +1718,9 @@ void GridPlanner::runCCLInGrid(int grid_id) {
   g.is_split_ = (g.components_.size() > 1);
 
   // 4. If CCL found components, update grid center to dominant component
-  if (!g.components_.empty()) {
+  // [ABLATION]: 该修正由 use_ccl_for_center 单独控制；关闭后网格代表位置
+  // 退回 updateGridCell() 里的未知体素质心，用于“去掉连通约束”配置。
+  if (use_ccl_for_center_ && !g.components_.empty()) {
     // Sort by size descending
     std::sort(g.components_.begin(), g.components_.end(),
               [](const GridComponent& a, const GridComponent& b) {
@@ -1708,6 +1729,158 @@ void GridPlanner::runCCLInGrid(int grid_id) {
     // Use largest component center as grid's representative center
     g.center_ = g.components_[0].center_;
   }
+}
+
+// [ABLATION]: 三维连通分量标记（slice_dim=3d）。
+// 与 2D 版本的唯一区别：标记空间从 size_x*size_y 扩展到 size_x*size_y*size_z，
+// BFS 增加 z 方向 ±1 的扩展，质心按三维坐标统计；不下采样高度。
+void GridPlanner::runCCLInGrid3D(int grid_id) {
+  GridCell& g = all_grids_[grid_id];
+  g.components_.clear();
+  g.is_split_ = false;
+  g.drone_component_id_ = -1;
+
+  if (g.free_num_ == 0) return;
+
+  Vector3i bbox_min_idx, bbox_max_idx;
+  sdf_map_->posToIndex(g.vmin_, bbox_min_idx);
+  sdf_map_->posToIndex(g.vmax_, bbox_max_idx);
+
+  const int size_x = bbox_max_idx.x() - bbox_min_idx.x();
+  const int size_y = bbox_max_idx.y() - bbox_min_idx.y();
+  const int size_z = bbox_max_idx.z() - bbox_min_idx.z();
+  if (size_x <= 0 || size_y <= 0 || size_z <= 0) return;
+
+  const int step = std::max(1, ccl_step_);
+  const int nx = std::max(1, size_x / step);
+  const int ny = std::max(1, size_y / step);
+  const int nz = std::max(1, size_z / step);
+  std::vector<int> labels(nx * ny * nz, 0);  // 0=unlabeled, >0=component_id
+  int component_id = 1;
+
+  auto isFreeInflatedIdx = [&](int ix, int iy, int iz) -> bool {
+    Eigen::Vector3i idx(ix, iy, iz);
+    if (!sdf_map_->isInMap(idx)) return false;
+    if (sdf_map_->getOccupancy(idx) != SDFMap::FREE) return false;
+    return sdf_map_->getDistance(idx) > ccl_clearance_thresh_;
+  };
+
+  for (int k = 0; k < nz; ++k) {
+    for (int j = 0; j < ny; ++j) {
+      for (int i = 0; i < nx; ++i) {
+        const int index = (k * ny + j) * nx + i;
+        if (labels[index] != 0) continue;
+
+        const int wx = bbox_min_idx.x() + i * step;
+        const int wy = bbox_min_idx.y() + j * step;
+        const int wz = bbox_min_idx.z() + k * step;
+        if (!isFreeInflatedIdx(wx, wy, wz)) continue;
+
+        std::stack<int> stack;
+        stack.push(index);
+        labels[index] = component_id;
+
+        int num_voxels = 0;
+        double X_avg = 0.0, Y_avg = 0.0, Z_avg = 0.0;
+
+        while (!stack.empty()) {
+          const int curr = stack.top();
+          stack.pop();
+          ++num_voxels;
+
+          const int cz = curr / (nx * ny);
+          const int rem = curr - cz * nx * ny;
+          const int cy = rem / nx;
+          const int cx = rem - cy * nx;
+          X_avg += cx;
+          Y_avg += cy;
+          Z_avg += cz;
+
+          const int dx[6] = {1, -1, 0, 0, 0, 0};
+          const int dy[6] = {0, 0, 1, -1, 0, 0};
+          const int dz[6] = {0, 0, 0, 0, 1, -1};
+          for (int d = 0; d < 6; ++d) {
+            const int nix = cx + dx[d];
+            const int niy = cy + dy[d];
+            const int niz = cz + dz[d];
+            if (nix < 0 || nix >= nx || niy < 0 || niy >= ny ||
+                niz < 0 || niz >= nz) {
+              continue;
+            }
+            const int nidx = (niz * ny + niy) * nx + nix;
+            if (labels[nidx] != 0) continue;
+            if (!isFreeInflatedIdx(bbox_min_idx.x() + nix * step,
+                                   bbox_min_idx.y() + niy * step,
+                                   bbox_min_idx.z() + niz * step)) {
+              continue;
+            }
+            labels[nidx] = component_id;
+            stack.push(nidx);
+          }
+        }
+
+        if (num_voxels < ccl_min_component_voxels_) {
+          ++component_id;
+          continue;
+        }
+
+        GridComponent comp;
+        comp.comp_id_ = component_id - 1;
+        comp.free_voxels_ = num_voxels;
+        sdf_map_->indexToPos(
+            Eigen::Vector3i(static_cast<int>(X_avg / num_voxels) * step + bbox_min_idx.x(),
+                            static_cast<int>(Y_avg / num_voxels) * step + bbox_min_idx.y(),
+                            static_cast<int>(Z_avg / num_voxels) * step + bbox_min_idx.z()),
+            comp.center_);
+        g.components_.push_back(comp);
+        ++component_id;
+      }
+    }
+  }
+
+  g.is_split_ = (g.components_.size() > 1);
+
+  if (use_ccl_for_center_ && !g.components_.empty()) {
+    std::sort(g.components_.begin(), g.components_.end(),
+              [](const GridComponent& a, const GridComponent& b) {
+                return a.free_voxels_ > b.free_voxels_;
+              });
+    g.center_ = g.components_[0].center_;
+  }
+}
+
+// [ABLATION]: 论文算法 1 第 17 行的前沿准入判断。
+bool GridPlanner::componentAllowsFrontier(int grid_id, const Vector3d& ftr_pos,
+                                          const Vector3d& drone_pos) const {
+  if (!use_ccl_for_filter_) return true;
+  if (grid_id < 0 || grid_id >= static_cast<int>(all_grids_.size())) return true;
+
+  const auto& g = all_grids_[grid_id];
+  if (g.components_.size() < 2) return true;
+
+  const int ftr_comp = findComponentForPoint(grid_id, ftr_pos);
+  if (ftr_comp < 0) return true;
+
+  int ref_comp = -1;
+  const bool drone_inside =
+      drone_pos[0] >= g.vmin_[0] && drone_pos[0] <= g.vmax_[0] &&
+      drone_pos[1] >= g.vmin_[1] && drone_pos[1] <= g.vmax_[1];
+  if (drone_inside) {
+    ref_comp = g.drone_component_id_;
+  }
+  if (ref_comp < 0) {
+    // 无人机不在该网格内：取分量中心距无人机最近者，近似其进入该网格后所处的一侧
+    double best_d = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < g.components_.size(); ++i) {
+      const double d = (g.components_[i].center_ - drone_pos).norm();
+      if (d < best_d) {
+        best_d = d;
+        ref_comp = static_cast<int>(i);
+      }
+    }
+  }
+  if (ref_comp < 0) return true;
+  return ftr_comp == ref_comp;
 }
 
 void GridPlanner::updateDroneComponent(const Vector3d& drone_pos) {
