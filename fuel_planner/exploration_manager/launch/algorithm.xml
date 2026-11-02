@@ -1,0 +1,375 @@
+<launch>
+  <arg name="map_size_x_"/>
+  <arg name="map_size_y_"/>
+  <arg name="map_size_z_"/>
+
+  <arg name="box_min_x"/>
+  <arg name="box_min_y"/>
+  <arg name="box_min_z"/>
+  <arg name="box_max_x"/>
+  <arg name="box_max_y"/>
+  <arg name="box_max_z"/>
+
+  <arg name="odometry_topic"/>
+  <arg name="sensor_pose_topic"/>
+  <arg name="depth_topic"/>
+  <arg name="cloud_topic"/>
+
+  <arg name="cx"/>
+  <arg name="cy"/>
+  <arg name="fx"/>
+  <arg name="fy"/>
+
+  <arg name="max_vel"/>
+  <arg name="max_acc"/>
+
+  <!-- main node -->
+  <node pkg="exploration_manager" name="exploration_node" type="exploration_node" output="screen">
+    <remap from ="/odom_world" to="$(arg odometry_topic)"/>
+    <remap from ="/map_ros/pose"   to = "$(arg sensor_pose_topic)"/> 
+    <remap from ="/map_ros/depth" to = "$(arg depth_topic)"/>
+    <remap from ="/map_ros/cloud" to="$(arg cloud_topic)"/>
+
+    <param name="sdf_map/resolution"      value="0.1" /> 
+    <param name="sdf_map/map_size_x"   value="$(arg map_size_x_)" /> 
+    <param name="sdf_map/map_size_y"   value="$(arg map_size_y_)" /> 
+    <param name="sdf_map/map_size_z"   value="$(arg map_size_z_)" /> 
+    <!-- <param name="sdf_map/obstacles_inflation"     value="0.099" />  -->
+    <param name="sdf_map/obstacles_inflation"     value="0.199" /> 
+    <param name="sdf_map/local_bound_inflate"    value="0.5"/>
+    <param name="sdf_map/local_map_margin" value="50"/>
+    <param name="sdf_map/ground_height"        value="-1.0"/>
+    <param name="sdf_map/default_dist"        value="0.0"/>
+    
+    <param name="sdf_map/p_hit"  value="0.65"/>
+    <param name="sdf_map/p_miss" value="0.35"/>
+    <param name="sdf_map/p_min"  value="0.12"/>
+    <param name="sdf_map/p_max"  value="0.90"/>
+    <param name="sdf_map/p_occ"  value="0.80"/>
+    <param name="sdf_map/min_ray_length" value="0.5"/>
+    <param name="sdf_map/max_ray_length" value="5.0"/>
+    <param name="sdf_map/virtual_ceil_height"   value="-10"/>
+    <param name="sdf_map/optimistic" value="false" type="bool"/>
+    <param name="sdf_map/signed_dist" value="false" type="bool"/>
+    <param name="sdf_map/box_min_x" value="$(arg box_min_x)" type="double"/>
+    <param name="sdf_map/box_min_y" value="$(arg box_min_y)" type="double"/>
+    <param name="sdf_map/box_min_z" value="$(arg box_min_z)" type="double"/>
+    <param name="sdf_map/box_max_x" value="$(arg box_max_x)" type="double"/>
+    <param name="sdf_map/box_max_y" value="$(arg box_max_y)" type="double"/>
+    <param name="sdf_map/box_max_z" value="$(arg box_max_z)" type="double"/>
+
+    <param name="map_ros/cx" value="$(arg cx)"/>
+    <param name="map_ros/cy" value="$(arg cy)"/>
+    <param name="map_ros/fx" value="$(arg fx)"/>
+    <param name="map_ros/fy" value="$(arg fy)"/>
+    <param name="map_ros/depth_filter_maxdist"   value="5.0"/>
+    <param name="map_ros/depth_filter_mindist"   value="0.2"/>
+    <param name="map_ros/depth_filter_margin"    value="2"/>
+    <param name="map_ros/k_depth_scaling_factor" value="1000.0"/>
+    <param name="map_ros/skip_pixel" value="2"/>
+    <!-- Measured from Gazebo /gazebo/get_link_state, expressed in base_link:
+         p450_D435i_0::base_link -> D435i::camera_depth_frame. -->
+    <param name="map_ros/sensor_offset_x" value="0.136153835"/>
+    <param name="map_ros/sensor_offset_y" value="0.000009665"/>
+    <param name="map_ros/sensor_offset_z" value="0.112718504"/>
+    <param name="map_ros/sensor_qx" value="-0.000014848"/>
+    <param name="map_ros/sensor_qy" value="0.174114948"/>
+    <param name="map_ros/sensor_qz" value="-0.000011898"/>
+    <param name="map_ros/sensor_qw" value="0.984725335"/>
+    <param name="map_ros/esdf_slice_height" value="0.3"/>
+    <param name="map_ros/visualization_truncate_height"   value="10.09"/>
+    <param name="map_ros/visualization_truncate_low"   value="-2.0"/>
+    <param name="map_ros/show_occ_time"  value="false"/>
+    <param name="map_ros/show_esdf_time" value="false"/>
+    <param name="map_ros/show_all_map" value="true"/>
+    <param name="map_ros/frame_id"      value="world"/>
+
+    <!-- [MODIFIED BY CODEX]: This run intentionally keeps replan_time=0.2 s.
+         EXP_008 handoff logs must measure the actual planning-time gap before
+         any replan-time or threshold retuning is attempted. -->
+    <param name="fsm/thresh_replan1" value="0.5" type="double"/>
+    <param name="fsm/thresh_replan2" value="0.5" type="double"/>
+    <param name="fsm/thresh_replan3" value="1.5" type="double"/>
+
+    <!-- <param name="fsm/thresh_replan1" value="0.00001" type="double"/> -->
+    <!-- <param name="fsm/thresh_replan2" value="100.0" type="double"/> -->
+    <!-- <param name="fsm/thresh_replan3" value="0.1" type="double"/> -->
+    <param name="fsm/replan_time" value="0.200" type="double"/>
+    <!-- Allow transient frontier/grid refresh failures to recover before
+         declaring exploration finished. -->
+    <param name="fsm/no_frontier_confirm_rounds" value="6" type="int"/>
+
+    <!-- Exploration manager -->
+
+    <!-- Grid Planner 参数（全局层网格分解） -->
+    <param name="grid_planner/grid_size" value="10.0" type="double"/>
+    <param name="grid_planner/max_level" value="2" type="int"/>
+    <param name="grid_planner/min_grid_size" value="5.0" type="double"/>
+    <param name="grid_planner/enforce_root_2x2" value="false" type="bool"/>
+    <param name="grid_planner/fixed_root_x" value="2" type="int"/>
+    <param name="grid_planner/fixed_root_y" value="2" type="int"/>
+    <param name="grid_planner/min_unknown" value="500" type="int"/>
+    <param name="grid_planner/min_free" value="3000" type="int"/>
+    <param name="grid_planner/consistent_cost" value="-5.0" type="double"/>
+    <param name="grid_planner/consistent_cost2" value="8.0" type="double"/>
+    <param name="grid_planner/astar_connect_max_dist" value="12.0" type="double"/>
+    <param name="grid_planner/unreachable_edge_penalty" value="80.0" type="double"/>
+    <param name="grid_planner/boundary_touch_eps" value="0.15" type="double"/>
+    <param name="grid_planner/reachable_neighbor_only" value="true" type="bool"/>
+    <param name="grid_planner/use_legacy_connectivity" value="true" type="bool"/>
+    <!-- [MODIFIED BY CODEX]: 连通性(CCL)主开关（消融实验）；false=关闭FALCON式连通分解 -->
+    <param name="grid_planner/use_ccl" value="true" type="bool"/>
+    <param name="grid_planner/enable_dynamic_subdivision" value="true" type="bool"/>
+    <param name="grid_planner/use_rush_subregions" value="true" type="bool"/>
+    <param name="grid_planner/subdivide_only_current_grid" value="true" type="bool"/>
+    <param name="grid_planner/max_subdivide_per_update" value="1" type="int"/>
+    <param name="grid_planner/subdivide_frontier_grids" value="true" type="bool"/>
+    <param name="grid_planner/max_frontier_subdivide_per_update" value="2" type="int"/>
+    <param name="grid_planner/frontier_subdivide_max_dist" value="18.0" type="double"/>
+    <!-- [MODIFIED BY CODEX]: the global tour is a coverage direction, so it
+         keeps predictive non-adjacent edges instead of deleting unknown grids. -->
+    <param name="grid_planner/only_adjacent_edge_for_tsp" value="false" type="bool"/>
+    <param name="grid_planner/non_adjacent_penalty" value="5000.0" type="double"/>
+    <param name="grid_planner/relevant_frontier_only" value="false" type="bool"/>
+    <param name="grid_planner/frontier_fallback_max_dist" value="6.0" type="double"/>
+    <param name="grid_planner/hard_block_non_adjacent_edge" value="true" type="bool"/>
+    <param name="grid_planner/hard_block_cost" value="5000.0" type="double"/>
+    <param name="grid_planner/coverage_radius" value="5.5" type="double"/>
+    <param name="grid_planner/coverage_height" value="1.5" type="double"/>
+    <param name="grid_planner/coverage_complete_ratio" value="0.85" type="double"/>
+    <param name="grid_planner/root_complete_coverage_ratio" value="0.95" type="double"/>
+    <param name="grid_planner/root_tail_gap_ratio" value="0.01" type="double"/>
+    <param name="grid_planner/root_tail_gap_free_voxels" value="120" type="int"/>
+    <!-- [MODIFIED BY CODEX]: retire from global TSP after 90 percent of the
+         grid's measured initial unknown workload is cleared. -->
+    <param name="grid_planner/tsp_retire_unknown_ratio" value="0.10" type="double"/>
+    <param name="grid_planner/coverage_voxel_stride" value="0.15" type="double"/>
+    <param name="grid_planner/grid_state_sample_res" value="0.2" type="double"/>
+    <!-- P0: info/frontier density weighting -->
+    <param name="grid_planner/w_info" value="2.0" type="double"/>
+    <param name="grid_planner/w_frontier" value="3.0" type="double"/>
+    <!-- P1: same-region bonus (makes TSP group connected grids) -->
+    <param name="grid_planner/w_region" value="10.0" type="double"/>
+
+    <param name="exploration/refine_local" value="true" type="bool"/>
+    <param name="exploration/refined_num" value="7" type="int"/>
+    <param name="exploration/max_decay" value="0.8" type="double"/>
+    <param name="exploration/top_view_num" value="15" type="int"/>
+    <param name="exploration/vm" value="$(eval 1.0 * arg('max_vel'))" type="double"/>
+    <param name="exploration/am" value="$(eval 1.0 * arg('max_acc'))" type="double"/>
+    <param name="exploration/yd" value="$(eval 80 * 3.1415926 / 180.0)" type="double"/>
+    <param name="exploration/ydd" value="$(eval 90 * 3.1415926 / 180.0)" type="double"/>
+    <param name="exploration/w_dir" value="1.5" type="double"/>
+    <param name="exploration/tsp_dir" value="$(find lkh_tsp_solver)/resource" type="string"/>
+    <param name="exploration/relax_time" value="1.0" type="double"/>
+    <!-- 网格切换：按前沿运动代价选当前网格，避免按序强行绕远 -->
+    <param name="exploration/grid_switch_lookahead" value="4" type="int"/>
+    <param name="exploration/grid_switch_order_penalty" value="2.0" type="double"/>
+    <param name="exploration/grid_switch_cost_margin" value="0.8" type="double"/>
+    <param name="exploration/grid_switch_unreachable_penalty" value="8.0" type="double"/>
+    <param name="exploration/grid_switch_max_path_length" value="14.0" type="double"/>
+    <param name="exploration/grid_switch_max_path_stretch" value="2.4" type="double"/>
+    <param name="exploration/grid_neighbor_hops" value="1" type="int"/>
+    <param name="exploration/grid_target_hold_rounds" value="8" type="int"/>
+    <param name="exploration/grid_target_switch_margin" value="1.5" type="double"/>
+    <param name="exploration/current_grid_priority_max_path" value="6.0" type="double"/>
+    <param name="exploration/current_grid_priority_margin" value="8.0" type="double"/>
+    <param name="exploration/current_grid_priority_path_margin" value="3.0" type="double"/>
+    <param name="exploration/root_coverage_priority_weight" value="0.8" type="double"/>
+    <param name="exploration/local_neighbor_frontier_max_path" value="8.0" type="double"/>
+    <param name="exploration/local_reobserve_radius" value="6.5" type="double"/>
+    <param name="exploration/local_reobserve_max_path" value="9.0" type="double"/>
+    <param name="exploration/local_recent_grid_reobserve_max_path" value="11.0" type="double"/>
+    <param name="exploration/local_view_uncovered_overlap_thresh" value="0.35" type="double"/>
+    <param name="exploration/local_view_covered_overlap_thresh" value="0.35" type="double"/>
+    <param name="exploration/local_view_block_cross_grid" value="false" type="bool"/>
+    <param name="exploration/root_complete_confirm_rounds" value="3" type="int"/>
+    <param name="exploration/enable_root_soft_release" value="false" type="bool"/>
+    <param name="exploration/root_soft_release_coverage_ratio" value="0.90" type="double"/>
+    <param name="exploration/root_soft_release_min_rounds" value="12" type="int"/>
+    <param name="exploration/root_soft_release_cooldown_rounds" value="25" type="int"/>
+
+    <!-- Dual-threshold grid switching + timeout + batch cleanup -->
+    <param name="exploration/root_switch_frontier_ratio" value="0.12" type="double"/>
+    <param name="exploration/root_switch_coverage_ratio" value="0.95" type="double"/>
+    <param name="exploration/root_hard_lock_max_unreachable_rounds" value="6" type="int"/>
+    <param name="exploration/root_timeout_seconds" value="150.0" type="double"/>
+    <param name="exploration/batch_cleanup_interval" value="3" type="int"/>
+
+    <param name="exploration/residual_defer_pass_cnt" value="3" type="int"/>
+    <param name="exploration/residual_defer_max_coverage" value="0.30" type="double"/>
+    <param name="exploration/residual_defer_max_path" value="7.5" type="double"/>
+    <param name="exploration/enable_grid_select_log" value="true" type="bool"/>
+    <param name="exploration/grid_select_log_path" value="/home/djg/Data_debug/grid_select_log.csv" type="string"/>
+    <!-- [MODIFIED BY CODEX]: Pair-level diagnostics produced several MB and
+         three synchronous flushes per replan. Keep the logger available but
+         disable it during normal exploration timing tests. -->
+    <param name="exploration/enable_local_tsp_cost_log" value="false" type="bool"/>
+    <!-- [MODIFIED BY CODEX]: Independent bounded-region closeout reward
+         (time-equivalent).  Keep the existing calibrated value at 0.8; this
+         structural integration does not retune its weight. -->
+    <param name="exploration/local_pocket_weight" value="0.8" type="double"/>
+    <param name="exploration/local_tsp_cost_log_path" value="/home/djg/Data_debug/local_tsp_cost_log.csv" type="string"/>
+    <param name="exploration/enable_decision_trace_log" value="true" type="bool"/>
+    <param name="exploration/decision_trace_log_path" value="/home/djg/Data_debug/decision_trace_log.csv" type="string"/>
+    <param name="exploration/enable_stats_log" value="true" type="bool"/>
+    <!-- [MODIFIED BY CODEX]: event-only planner timing for B-spline handoff diagnosis. -->
+    <param name="exploration/enable_fsm_handoff_log" value="true" type="bool"/>
+    <param name="exploration/fsm_handoff_log_path" value="/home/djg/Data_debug/fsm_handoff_log.csv" type="string"/>
+    <!-- [MODIFIED]: stats_log 路径改指 Proposed/gazebo场景2/实验数据.csv -->
+    <param name="exploration/stats_log_path" value="/home/djg/Data_debug/Proposed/gazebo场景2/实验数据.csv" type="string"/>
+    <param name="exploration/local_tsp_block_cost" value="5000.0" type="double"/>
+    <param name="exploration/local_tsp_path_sample_step" value="0.2" type="double"/>
+    <param name="exploration/local_tsp_first_cost_ratio" value="1.3" type="double"/>
+    <param name="exploration/local_tsp_first_cost_margin" value="0.5" type="double"/>
+    <!-- [MODIFIED BY CODEX]: LKH orders the top candidates. Dijkstra refines
+         the continuous Euclidean refined_radius prefix and uses the first
+         successor outside the radius as a fixed exit-cost anchor. -->
+    <param name="exploration/local_tsp_candidate_num" value="10" type="int"/>
+
+    <!-- Diagnostics: enable per-frontier logs during debugging.
+         They are verbose, but necessary to trace missed closeouts and detours. -->
+    <param name="frontier/enable_frontier_track_log" value="true" type="bool"/>
+    <param name="frontier/frontier_track_log_path" value="/home/djg/Data_debug/frontier_track_log.csv" type="string"/>
+    <param name="frontier/enable_local_view_log" value="true" type="bool"/>
+    <param name="frontier/local_view_log_path" value="/home/djg/Data_debug/local_view_log.csv" type="string"/>
+    <param name="frontier/enable_start_cost_log" value="true" type="bool"/>
+    <param name="frontier/start_cost_log_path" value="/home/djg/Data_debug/start_cost_log.csv" type="string"/>
+
+    <!-- V10 遗忘检测参数 -->
+    <param name="frontier/forget_thresh_low" value="0.22" type="double"/>
+    <param name="frontier/forget_thresh_high" value="0.45" type="double"/>
+
+    <!-- V10 近处优先参数 -->
+    <!-- Config A: prox=10 -->
+    <param name="frontier/proximity_bonus_weight" value="3.0" type="double"/>
+    <param name="frontier/proximity_bonus_radius" value="4.0" type="double"/>
+    <param name="frontier/behind_penalty_weight" value="1.0" type="double"/>
+
+    <!-- V10 凹陷权重参数 -->
+    <!-- Config A: structure=5 -->
+    <param name="frontier/structure_bonus_weight" value="0.7" type="double"/>
+    <param name="frontier/regret_lambda1" value="0.8" type="double"/>
+    <param name="frontier/regret_lambda2" value="0.2" type="double"/>
+    <!-- [MODIFIED BY CODEX]: 结构评价主开关（消融实验）；false=关闭整个结构评价机制 -->
+    <param name="frontier/enable_structure_eval" value="true" type="bool"/>
+
+    <!-- V10 路径膨胀覆盖参数 -->
+    <param name="frontier/inflate_radius" value="5.5" type="double"/>
+    <param name="exploration/refined_radius" value="5.0" type="double"/>
+
+    <!-- V11 TSP不可达前沿过滤参数 -->
+    <param name="frontier/max_travel_cost" value="1000.0" type="double"/>
+    <param name="frontier/min_path_size" value="5" type="int"/>
+    <!-- V11 遗忘前沿比例控制参数 -->
+    <param name="frontier/forget_ratio_limit" value="0.50" type="double"/>
+    <param name="frontier/forget_min_cells" value="10" type="int"/>
+    <!-- V11 dry_run模式：false=实际过滤（根据二次仿真数据确认开启）// [MODIFIED BY CODEX] -->
+    <param name="frontier/filter_dry_run" value="false" type="bool"/>
+
+    <!--创建前沿动态连通区域-->
+
+
+    <param name="frontier/cluster_min" value="100" type="int"/>
+    <param name="frontier/cluster_size_xy" value="2.0" type="double"/>
+    <param name="frontier/cluster_size_z" value="10.0" type="double"/>
+    <param name="frontier/min_candidate_dist" value="0.75" type="double"/>
+    <param name="frontier/min_candidate_clearance" value="0.21" type="double"/>
+    <param name="frontier/candidate_dphi" value="$(eval 15 * 3.1415926 / 180.0)" type="double"/>
+    <param name="frontier/candidate_rnum" value="3" type="int"/>
+    <param name="frontier/candidate_rmin" value="1.0" type="double"/>
+    <param name="frontier/candidate_rmax" value="1.5" type="double"/>
+    <param name="frontier/down_sample" value="3" type="int"/>;
+    <param name="frontier/min_visib_num" value="30" type="int"/>;
+    <param name="frontier/min_view_finish_fraction" value="0.4" type="double"/>;
+
+    <!-- Perception utils -->
+    <param name="perception_utils/top_angle" value="0.56125" type="double"/>;
+    <param name="perception_utils/left_angle" value="0.69222" type="double"/>;
+    <param name="perception_utils/right_angle" value="0.68901" type="double"/>;
+    <param name="perception_utils/max_dist" value="4.5" type="double"/>;
+    <param name="perception_utils/vis_dist" value="1.0" type="double"/>;
+
+
+    <param name="heading_planner/yaw_diff" value="$(eval 30 * 3.1415926 / 180.0)" type="double"/>
+    <param name="heading_planner/half_vert_num" value="5" type="int"/>
+    <param name="heading_planner/lambda1" value="2.0" type="double"/>
+    <param name="heading_planner/lambda2" value="1.0" type="double"/>
+    <param name="heading_planner/max_yaw_rate" value="$(eval 10 * 3.1415926 / 180.0)" type="double"/>
+    <param name="heading_planner/w" value="20000.0" type="double"/>
+    <param name="heading_planner/weight_type" value="1" type="double"/>
+
+  <!-- planner manager -->
+    <!-- <param name="manager/max_vel" value="$(arg max_vel)" type="double"/> -->
+    <param name="manager/max_vel" value="$(arg max_vel)" type="double"/>
+    <param name="manager/max_acc" value="$(arg max_acc)" type="double"/>
+    <param name="manager/max_jerk" value="4" type="double"/>
+    <param name="manager/dynamic_environment" value="0" type="int"/>
+    <param name="manager/local_segment_length" value="6.0" type="double"/>
+    <param name="manager/clearance_threshold" value="0.4" type="double"/>
+    <param name="manager/control_points_distance" value="0.35" type="double"/>
+    <param name="manager/use_geometric_path" value="true" type="bool"/>
+    <param name="manager/use_kinodynamic_path" value="true" type="bool"/>
+    <param name="manager/use_topo_path" value="true" type="bool"/>
+    <param name="manager/use_optimization" value="true" type="bool"/>
+    <param name="manager/use_active_perception" value="true" type="bool"/>
+    <param name="manager/min_time" value="true" type="bool"/>
+
+  <!-- kinodynamic path searching -->
+    <param name="search/max_tau" value="0.8" type="double"/>
+    <param name="search/init_max_tau" value="1.0" type="double"/>
+    <param name="search/max_vel" value="$(arg max_vel)" type="double"/>
+    <param name="search/vel_margin" value="0.25" type="double"/>
+    <param name="search/max_acc" value="$(arg max_acc)" type="double"/>
+    <param name="search/w_time" value="10.0" type="double"/>
+    <param name="search/horizon" value="5.0" type="double"/>
+    <param name="search/lambda_heu" value="10.0" type="double"/>
+    <param name="search/resolution_astar" value="0.025" type="double"/>
+    <param name="search/time_resolution" value="0.8" type="double"/>
+    <param name="search/margin" value="0.4" type="double"/>
+    <param name="search/allocate_num" value="100000" type="int"/>
+    <param name="search/check_num" value="10" type="int"/>
+    <param name="search/optimistic" value="false" type="bool"/>
+
+    <param name="astar/lambda_heu" value="10000.0" type="double"/>
+    <!-- [MODIFIED BY CODEX]: Restore FUEL-original's bounded ATSP edge
+         estimator.  The final selected target is still searched by the
+         planner-manager A* whose time limit is overridden to 1.0 s. -->
+    <param name="astar/resolution_astar" value="0.2" type="double"/>
+    <param name="astar/allocate_num" value="1000000" type="int"/>
+    <param name="astar/max_search_time" value="0.001" type="double"/>
+
+  <!-- trajectory optimization -->
+    <param name="optimization/ld_smooth" value="20.0" type="double"/>
+    <param name="optimization/ld_dist" value="10.0" type="double"/>
+    <param name="optimization/ld_feasi" value="2.0" type="double"/>
+    <param name="optimization/ld_start" value="100.0" type="double"/>
+    <param name="optimization/ld_end" value="0.5" type="double"/>
+    <param name="optimization/ld_guide" value="1.5" type="double"/>
+    <param name="optimization/ld_waypt" value="0.3" type="double"/>
+    <param name="optimization/ld_view" value="0.0" type="double"/>
+    <param name="optimization/ld_time" value="1.0" type="double"/>
+    <param name="optimization/dist0" value="0.7" type="double"/>
+    <param name="optimization/max_vel" value="$(arg max_vel)" type="double"/>
+    <param name="optimization/max_acc" value="$(arg max_acc)" type="double"/>
+    <param name="optimization/algorithm1" value="15" type="int"/>
+    <param name="optimization/algorithm2" value="11" type="int"/>
+    <param name="optimization/max_iteration_num1" value="2" type="int"/>
+    <param name="optimization/max_iteration_num2" value="2000" type="int"/>
+    <param name="optimization/max_iteration_num3" value="200" type="int"/>
+    <param name="optimization/max_iteration_num4" value="200" type="int"/>
+
+    <param name="optimization/max_iteration_time1" value="0.0001" type="double"/>
+    <param name="optimization/max_iteration_time2" value="0.005" type="double"/>
+    <param name="optimization/max_iteration_time3" value="0.003" type="double"/>
+    <param name="optimization/max_iteration_time4" value="0.003" type="double"/>
+    <param name="bspline/limit_vel" value="$(arg max_vel)" type="double"/>
+    <param name="bspline/limit_acc" value="$(arg max_acc)" type="double"/>
+    <param name="bspline/limit_ratio" value="1.1" type="double"/>
+    <param name="bspline/limit_vel" value="$(arg max_vel)" type="double"/>
+    <param name="bspline/limit_acc" value="$(arg max_acc)" type="double"/>
+    <param name="bspline/limit_ratio" value="1.1" type="double"/>
+
+  </node>
+
+</launch>
