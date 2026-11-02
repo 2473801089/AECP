@@ -136,8 +136,8 @@
          use_ccl_for_filter = 同网格异分量前沿不参与本轮局部排序（论文算法1）
          use_ccl_for_center = 网格代表位置取最大连通分量质心
          “去掉连通约束”配置：两者同时置 false。 -->
-    <param name="grid_planner/use_ccl_for_filter" value="true" type="bool"/>
-    <param name="grid_planner/use_ccl_for_center" value="true" type="bool"/>
+    <param name="grid_planner/use_ccl_for_filter" value="false" type="bool"/>
+    <param name="grid_planner/use_ccl_for_center" value="false" type="bool"/>
     <!-- [ABLATION] 连通切片维数：2d=中间高度水平切片（默认），3d=包围盒内三维连通 -->
     <param name="grid_planner/slice_dim" value="2d" type="string"/>
     <param name="grid_planner/enable_dynamic_subdivision" value="true" type="bool"/>
