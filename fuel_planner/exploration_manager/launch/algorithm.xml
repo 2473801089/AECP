@@ -139,7 +139,7 @@
     <param name="grid_planner/use_ccl_for_filter" value="true" type="bool"/>
     <param name="grid_planner/use_ccl_for_center" value="true" type="bool"/>
     <!-- [ABLATION] 连通切片维数：2d=中间高度水平切片（默认），3d=包围盒内三维连通 -->
-    <param name="grid_planner/slice_dim" value="2d" type="string"/>
+    <param name="grid_planner/slice_dim" value="3d" type="string"/>
     <param name="grid_planner/enable_dynamic_subdivision" value="true" type="bool"/>
     <param name="grid_planner/use_rush_subregions" value="true" type="bool"/>
     <param name="grid_planner/subdivide_only_current_grid" value="true" type="bool"/>
