@@ -177,6 +177,8 @@ public:
                                const Vector3d& drone_pos) const;
   bool cclFilterEnabled() const { return use_ccl_for_filter_; }
   bool cclCenterEnabled() const { return use_ccl_for_center_; }
+  // [ABLATION] 当前连通切片维数（"2d"/"3d"）
+  const std::string& sliceDim() const { return slice_dim_str_; }
 
   bool findGridAnchorById(int grid_id, Vector3d& anchor);
   void clusterRegions();

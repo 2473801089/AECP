@@ -144,7 +144,8 @@ void FastExplorationFSM::openStatsLog() {
 
   fd_->stats_log_file_.open(fd_->stats_log_path_.c_str());
   if (fd_->stats_log_file_.is_open()) {
-    fd_->stats_log_file_ << "elapsed_sec,coverage_ratio,explored_volume_m3,traj_length_m,speed_mps" << std::endl;
+    fd_->stats_log_file_ << "elapsed_sec,coverage_ratio,explored_volume_m3,traj_length_m,speed_mps,"
+                            "pos_x,pos_y,pos_z,grid_id,known_voxels,total_voxels" << std::endl;
     fd_->stats_log_file_.flush();
     ROS_WARN("[StatsLog] Logging to %s", fd_->stats_log_path_.c_str());
   } else {
@@ -166,22 +167,37 @@ void FastExplorationFSM::FSMCallback(const ros::TimerEvent& e) {
       // Volume = coverage_ratio × 40×40×2 = 3200 m³ for cross-paper comparison.
       double coverage_ratio = 0.0;
       double explored_volume_m3 = 0.0;
+      int known_voxels = 0, total_voxels = 0;
 
       if (expl_manager_ && expl_manager_->getSDFMap()) {
         auto& sdf = *expl_manager_->getSDFMap();
         int known = 0, total = 0;
         sdf.countKnownInBox(known, total);
+        known_voxels = known;
+        total_voxels = total;
         coverage_ratio = total > 0 ? static_cast<double>(known) / static_cast<double>(total) : 0.0;
         explored_volume_m3 = coverage_ratio * 3200.0;
       }
 
       double speed_mps = fd_->odom_vel_.norm();
 
+      // [ABLATION] 位置与所在网格：回访航程占比、区域驻留、后期时间占比都依赖这几列
+      int cur_grid_id = -1;
+      if (expl_manager_ && expl_manager_->grid_planner_) {
+        cur_grid_id = expl_manager_->grid_planner_->getGridContainingPoint(fd_->odom_pos_);
+      }
+
       fd_->stats_log_file_ << elapsed << ","
                            << coverage_ratio << ","
                            << explored_volume_m3 << ","
                            << fd_->total_traj_length_ << ","
-                           << speed_mps << std::endl;
+                           << speed_mps << ","
+                           << fd_->odom_pos_.x() << ","
+                           << fd_->odom_pos_.y() << ","
+                           << fd_->odom_pos_.z() << ","
+                           << cur_grid_id << ","
+                           << known_voxels << ","
+                           << total_voxels << std::endl;
       fd_->stats_log_file_.flush();
     }
   }

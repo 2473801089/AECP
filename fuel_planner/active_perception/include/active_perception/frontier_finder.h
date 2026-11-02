@@ -169,6 +169,8 @@ namespace fast_planner
     bool selectBestCurrentCloseoutViewpoint(const Frontier &f, const Eigen::Vector3d &cur_pos, Viewpoint &best_view);
 
     Frontier *getFrontierById(int id);
+    // [ABLATION] 供运行期记录/校验当前结构评分权重
+    double structureAlpha() const { return structure_alpha_; }
 
     double computePersistentCoverageOverlap(const Frontier &frontier) const;
     void updateFrontierTrackingStats(const Vector3d &cur_pos);

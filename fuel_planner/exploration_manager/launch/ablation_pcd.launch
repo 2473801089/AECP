@@ -1,0 +1,113 @@
+<launch>
+  <!-- ============================================================
+       [ABLATION] 点云场景实验入口（Maze1 = office.pcd, Maze2 = office2.pcd）
+       与 exploration.launch 的区别：
+         1) 无 Gazebo/PX4，使用 map_generator 发布 pcd + pcl_render_node 渲染深度；
+         2) 位姿/深度话题切到 /pcl_render_node/*；
+         3) 地图尺寸与 box 由外部传入，便于按场景切换。
+       用法：
+         roslaunch exploration_manager ablation_pcd.launch \
+           pcd:=$(find map_generator)/resource/office.pcd \
+           map_size_x:=20.0 map_size_y:=34.0 map_size_z:=4.0 \
+           log_dir:=/home/djg/Data_ablation/Maze1/B0-baseline/run01
+       ============================================================ -->
+
+  <arg name="pcd" default="$(find map_generator)/resource/office.pcd"/>
+  <arg name="map_size_x" default="20.0"/>
+  <arg name="map_size_y" default="34.0"/>
+  <arg name="map_size_z" default="4.0"/>
+
+  <arg name="box_min_x" default="-9.0"/>
+  <arg name="box_min_y" default="-16.0"/>
+  <arg name="box_min_z" default="0.0"/>
+  <arg name="box_max_x" default="9.0"/>
+  <arg name="box_max_y" default="16.0"/>
+  <arg name="box_max_z" default="2.0"/>
+
+  <arg name="init_x" default="0.0"/>
+  <arg name="init_y" default="0.0"/>
+  <arg name="init_z" default="1.0"/>
+
+  <arg name="odom_topic" default="/state_ukf/odom"/>
+  <arg name="log_dir" default="/home/djg/Data_debug"/>
+  <arg name="max_vel" default="2.0"/>
+  <arg name="max_acc" default="2.0"/>
+
+  <!-- 点云地图 -->
+  <node pkg="map_generator" name="map_pub" type="map_pub" output="screen" args="$(arg pcd)"/>
+
+  <!-- 主算法 -->
+  <include file="$(find exploration_manager)/launch/algorithm.xml">
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+
+    <arg name="box_min_x" value="$(arg box_min_x)"/>
+    <arg name="box_min_y" value="$(arg box_min_y)"/>
+    <arg name="box_min_z" value="$(arg box_min_z)"/>
+    <arg name="box_max_x" value="$(arg box_max_x)"/>
+    <arg name="box_max_y" value="$(arg box_max_y)"/>
+    <arg name="box_max_z" value="$(arg box_max_z)"/>
+
+    <arg name="odometry_topic" value="$(arg odom_topic)"/>
+    <arg name="sensor_pose_topic" value="/pcl_render_node/sensor_pose"/>
+    <arg name="depth_topic" value="/pcl_render_node/depth"/>
+    <arg name="cloud_topic" value="/unused_depth_topic"/>
+
+    <arg name="cx" value="321.046"/>
+    <arg name="cy" value="243.449"/>
+    <arg name="fx" value="387.229"/>
+    <arg name="fy" value="387.229"/>
+
+    <!-- 点云仿真：sensor_pose 已是相机位姿，外参必须是单位变换 -->
+    <arg name="sensor_offset_x" value="0.0"/>
+    <arg name="sensor_offset_y" value="0.0"/>
+    <arg name="sensor_offset_z" value="0.0"/>
+    <arg name="sensor_qx" value="0.0"/>
+    <arg name="sensor_qy" value="0.0"/>
+    <arg name="sensor_qz" value="0.0"/>
+    <arg name="sensor_qw" value="1.0"/>
+
+    <arg name="max_vel" value="$(arg max_vel)"/>
+    <arg name="max_acc" value="$(arg max_acc)"/>
+    <arg name="log_dir" value="$(arg log_dir)"/>
+  </include>
+
+  <!-- 轨迹服务器 -->
+  <node pkg="plan_manage" name="traj_server" type="traj_server" output="screen">
+    <remap from="/position_cmd" to="planning/pos_cmd"/>
+    <remap from="/odom_world" to="$(arg odom_topic)"/>
+    <param name="traj_server/time_forward" value="1.5" type="double"/>
+    <param name="traj_server/pub_traj_id" value="4" type="int"/>
+    <param name="traj_server/init_x" value="$(arg init_x)" type="double"/>
+    <param name="traj_server/init_y" value="$(arg init_y)" type="double"/>
+    <param name="traj_server/init_z" value="$(arg init_z)" type="double"/>
+    <param name="enable_handoff_log" value="true" type="bool"/>
+    <param name="handoff_log_path" value="$(arg log_dir)/traj_server_handoff_log.csv" type="string"/>
+    <param name="perception_utils/top_angle" value="0.56125" type="double"/>
+    <param name="perception_utils/left_angle" value="0.69222" type="double"/>
+    <param name="perception_utils/right_angle" value="0.68901" type="double"/>
+    <param name="perception_utils/max_dist" value="4.5" type="double"/>
+    <param name="perception_utils/vis_dist" value="1.0" type="double"/>
+  </node>
+
+  <node pkg="waypoint_generator" name="waypoint_generator" type="waypoint_generator" output="screen">
+    <remap from="~odom" to="$(arg odom_topic)"/>
+    <remap from="~goal" to="/move_base_simple/goal"/>
+    <remap from="~traj_start_trigger" to="/traj_start_trigger"/>
+    <param name="waypoint_type" value="point"/>
+  </node>
+
+  <!-- 内置仿真器（四旋翼动力学 + SO3 控制 + 深度渲染） -->
+  <include file="$(find exploration_manager)/launch/simulator.xml">
+    <arg name="map_size_x_" value="$(arg map_size_x)"/>
+    <arg name="map_size_y_" value="$(arg map_size_y)"/>
+    <arg name="map_size_z_" value="$(arg map_size_z)"/>
+    <arg name="init_x" value="$(arg init_x)"/>
+    <arg name="init_y" value="$(arg init_y)"/>
+    <arg name="init_z" value="$(arg init_z)"/>
+    <arg name="odometry_topic" value="$(arg odom_topic)"/>
+    <arg name="c_num" value="0"/>
+    <arg name="p_num" value="130"/>
+  </include>
+</launch>

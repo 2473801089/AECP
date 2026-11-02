@@ -264,7 +264,14 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
           << "selected_frontier_grid_id,selected_frontier_root_id,next_goal_x,next_goal_y,"
           << "next_goal_z,next_goal_yaw,path_len,time_lb,reachable_view_count,"
           << "sel_motion_cost,sel_detour_cost,sel_pocket_score,sel_gradient,sel_backward_penalty,"
-          << "sel_total_score,candidate_count\n";
+          << "sel_total_score,candidate_count,"
+          // [ABLATION] L1/L2 机制证据 + 阶段耗时
+          << "straight_dist,path_stretch,crosses_wall,same_grid_other_component,"
+          << "ccl_candidates_before,ccl_filtered_num,"
+          << "ray_term,density_term,structure_score,pocket_flag,"
+          << "gradient_term,has_next_grid,tsp_order_selected,"
+          << "alt_changed_by_structure,alt_changed_by_guidance,"
+          << "plan_ms_total,plan_ms_grid,plan_ms_reach,plan_ms_rank\n";
       decision_trace_log_file_.flush();
       ROS_WARN_STREAM("[DecisionTraceLog] Logging to " << decision_trace_log_path_);
     } else {
@@ -309,6 +316,29 @@ void FastExplorationManager::initialize(ros::NodeHandle& nh) {
   local_par_file << "GAIN23 = NO\n";
   local_par_file << "OUTPUT_TOUR_FILE =" << ep_->tsp_dir_ << "/local_frontier.txt\n";
   local_par_file << "RUNS = 1\n";
+  local_par_file.close();
+
+  // [ABLATION] 把本配置的开关状态落盘，供“开关是否真的进入运行”的核对
+  {
+    std::string dir = decision_trace_log_path_;
+    const size_t slash = dir.find_last_of('/');
+    dir = (slash == std::string::npos) ? std::string(".") : dir.substr(0, slash);
+    const std::string flags_path = dir + "/ablation_flags.json";
+    std::ofstream flags(flags_path.c_str());
+    if (flags.is_open()) {
+      flags << "{\n"
+            << "  \"frontier_alpha\": " << frontier_finder_->structureAlpha() << ",\n"
+            << "  \"use_ccl_for_filter\": "
+            << (grid_planner_->cclFilterEnabled() ? "true" : "false") << ",\n"
+            << "  \"use_ccl_for_center\": "
+            << (grid_planner_->cclCenterEnabled() ? "true" : "false") << ",\n"
+            << "  \"slice_dim\": \"" << grid_planner_->sliceDim() << "\",\n"
+            << "  \"use_grid_guidance\": " << (use_grid_guidance_ ? "true" : "false") << "\n"
+            << "}\n";
+      flags.close();
+      ROS_WARN_STREAM("[Ablation] flags -> " << flags_path);
+    }
+  }
 }
 
 /**
@@ -323,6 +353,13 @@ int FastExplorationManager::planExploreMotion(
     const Vector3d& pos, const Vector3d& vel, const Vector3d& acc, const Vector3d& yaw) {
   ros::Time t1 = ros::Time::now();
   auto t2 = t1;
+  // [ABLATION] 整轮规划起点，用于 decision_trace 的 plan_ms_total
+  const ros::Time plan_begin_time = t1;
+  // [ABLATION] 阶段耗时与“是否存在下一网格”，在下方赋值后由 trace 写出
+  double plan_ms_grid_ = -1.0;
+  double plan_ms_reach_ = -1.0;
+  double plan_ms_rank_ = -1.0;
+  int has_next_grid_flag_ = 0;
   ed_->views_.clear();
   ed_->global_tour_.clear();
 
@@ -356,6 +393,8 @@ int FastExplorationManager::planExploreMotion(
   if (!ed_->frontiers_.empty()) frontier_finder_->updateFrontierCostMatrix();
 
   // 将前沿面映射到网格
+  // [ABLATION] 网格层（含 CCL）耗时
+  const ros::Time t_grid_begin = ros::Time::now();
   grid_planner_->updateGrids(pos);
   grid_planner_->inputFrontiersDetailed(ed_->averages_, ed_->points_);
   ed_->grid_ids_.clear();
@@ -367,6 +406,7 @@ int FastExplorationManager::planExploreMotion(
   // RUSH: update subregion states and compute subregion TSP tour
   grid_planner_->updateSubRegionStates(pos);
   grid_planner_->computeSubRegionTSP(pos);
+  plan_ms_grid_ = (ros::Time::now() - t_grid_begin).toSec() * 1000.0;
 
   const int cur_gid_initial = grid_planner_->getGridContainingPoint(pos);
   if (active_root_grid_id_ < 0 && cur_gid_initial >= 0 &&
@@ -517,6 +557,21 @@ int FastExplorationManager::planExploreMotion(
   double sel_pocket_score_ = -1.0, sel_gradient_ = -1.0, sel_backward_penalty_ = -1.0;
   double sel_total_score_ = -1.0;
   int candidate_count_ = 0;
+
+  // [ABLATION] 本轮机制证据（L1/L2），默认 -1 表示不可用
+  double sel_straight_dist_ = -1.0;
+  double sel_path_stretch_ = -1.0;
+  int sel_crosses_wall_ = -1;
+  int sel_same_grid_other_component_ = -1;
+  double sel_ray_term_ = -1.0;
+  double sel_density_term_ = -1.0;
+  double sel_structure_score_ = -1.0;
+  int sel_pocket_flag_ = -1;
+  int sel_tsp_order_ = -1;
+  int ccl_candidates_before_ = -1;
+  int ccl_filtered_num = 0;
+  int alt_changed_by_structure_ = -1;
+  int alt_changed_by_guidance_ = -1;
   auto write_decision_trace = [&](int stage, int result_code, double path_len,
                                   double time_lb, int reachable_view_count) {
     if (!enable_decision_trace_log_ || !decision_trace_log_file_.is_open()) return;
@@ -559,7 +614,18 @@ int FastExplorationManager::planExploreMotion(
         << path_len << "," << time_lb << "," << backup_goal_count << ","
         << sel_motion_cost_ << "," << sel_detour_cost_ << ","
         << sel_pocket_score_ << "," << sel_gradient_ << "," << sel_backward_penalty_ << ","
-        << sel_total_score_ << "," << candidate_count_ << "\n";
+        << sel_total_score_ << "," << candidate_count_ << ","
+        // [ABLATION] L1/L2 机制证据 + 阶段耗时
+        << sel_straight_dist_ << "," << sel_path_stretch_ << ","
+        << sel_crosses_wall_ << "," << sel_same_grid_other_component_ << ","
+        << ccl_candidates_before_ << "," << ccl_filtered_num << ","
+        << sel_ray_term_ << "," << sel_density_term_ << ","
+        << sel_structure_score_ << "," << sel_pocket_flag_ << ","
+        << sel_gradient_ << "," << has_next_grid_flag_ << ","
+        << sel_tsp_order_ << ","
+        << alt_changed_by_structure_ << "," << alt_changed_by_guidance_ << ","
+        << (ros::Time::now() - plan_begin_time).toSec() * 1000.0 << ","
+        << plan_ms_grid_ << "," << plan_ms_reach_ << "," << plan_ms_rank_ << "\n";
     decision_trace_log_file_.flush();
   };
 
@@ -858,6 +924,8 @@ int FastExplorationManager::planExploreMotion(
   candidate_fids.reserve(ed_->points_.size());
   candidate_start_path_lengths.reserve(ed_->points_.size());
   candidate_start_motion_costs.reserve(ed_->points_.size());
+  // [ABLATION] 可达性检验（逐前沿有界 A*）耗时
+  const ros::Time t_reach_begin = ros::Time::now();
   for (int fid = 0; fid < static_cast<int>(ed_->points_.size()); ++fid) {
     vector<Vector3d> path;
     // Zero velocity keeps the direction-consistency term separate below while
@@ -876,11 +944,12 @@ int FastExplorationManager::planExploreMotion(
         std::isfinite(motion_cost) ? motion_cost : 1000.0;
   }
   ROS_INFO("[LocalStartCost] original_bounded_astar_all=%zu", candidate_fids.size());
+  plan_ms_reach_ = (ros::Time::now() - t_reach_begin).toSec() * 1000.0;
 
   // [ABLATION]: 论文算法 1 第 17 行——同网格但分属不同连通分量的前沿
   // 本轮不参与局部排序。仅在 grid_planner/use_ccl_for_filter=true 时生效；
   // 关闭后即为“去掉连通约束”配置。
-  int ccl_filtered_num = 0;
+  ccl_candidates_before_ = static_cast<int>(candidate_fids.size());
   if (grid_planner_->cclFilterEnabled() && !candidate_fids.empty()) {
     vector<int> allowed_fids;
     allowed_fids.reserve(candidate_fids.size());
@@ -921,6 +990,7 @@ int FastExplorationManager::planExploreMotion(
       has_next_grid = true;
     }
   }
+  has_next_grid_flag_ = has_next_grid ? 1 : 0;
 
   // --- Step 4: Local-frontier start costs ---
   // [MODIFIED BY CODEX]: Four-term start cost only:
@@ -932,7 +1002,13 @@ int FastExplorationManager::planExploreMotion(
   struct SimpleCand {
     double score_; int fid_;
     double motion_cost_, path_length_, detour_cost_, pocket_score_, gradient_, backward_penalty_;
+    // [ABLATION]: 反事实打分——去掉结构项 / 去掉方向项后的同一候选代价，
+    // 用于统计“机制是否改变了首目标”（L2 证据）。
+    double score_no_structure_, score_no_guidance_;
   };
+
+  // [ABLATION] 阶段计时与反事实统计（供 decision_trace 使用）
+  ros::Time t_rank_begin = ros::Time::now();
   vector<SimpleCand> scored;
   scored.reserve(candidate_fids.size());
 
@@ -979,8 +1055,26 @@ int FastExplorationManager::planExploreMotion(
 
     const double score = motion_cost + direction_cost
                          - w_pocket * pocket_score - gradient;
+    // [ABLATION] 反事实代价：把结构奖励/方向奖励各自加回去
+    const double score_no_structure = score + w_pocket * pocket_score;
+    const double score_no_guidance = score + gradient;
     scored.push_back({score, fid, motion_cost, path_len, 0.0,
-                      pocket_score, gradient, direction_cost});
+                      pocket_score, gradient, direction_cost,
+                      score_no_structure, score_no_guidance});
+  }
+
+  const double rank_ms = (ros::Time::now() - t_rank_begin).toSec() * 1000.0;
+  plan_ms_rank_ = rank_ms;
+
+  // [ABLATION] 三种口径下的首目标，用于判断机制是否改变决策
+  int cf_best_fid = -1, cf_best_no_structure = -1, cf_best_no_guidance = -1;
+  double cf_best = std::numeric_limits<double>::infinity();
+  double cf_best_ns = std::numeric_limits<double>::infinity();
+  double cf_best_ng = std::numeric_limits<double>::infinity();
+  for (const auto& c : scored) {
+    if (c.score_ < cf_best) { cf_best = c.score_; cf_best_fid = c.fid_; }
+    if (c.score_no_structure_ < cf_best_ns) { cf_best_ns = c.score_no_structure_; cf_best_no_structure = c.fid_; }
+    if (c.score_no_guidance_ < cf_best_ng) { cf_best_ng = c.score_no_guidance_; cf_best_no_guidance = c.fid_; }
   }
 
   // Sort by score ascending
@@ -1281,6 +1375,18 @@ int FastExplorationManager::planExploreMotion(
     // [MODIFIED BY CODEX]: Dijkstra's later viewpoints are a pose look-ahead,
     // not a flight queue.  Only its first node can be published to the FSM.
     add_backup_goal(ed_->refined_points_[0], refined_yaws[0]);
+    // [DIAG/FIX]: 细化视点偶尔会落在已知占据体素上（地图在两轮之间更新所致），
+    // 此时 A* 必然 NO_PATH。按“细化视点 → 该前沿代表视点 → 前沿中心”的顺序兜底，
+    // 后两者都是前沿检测保证的自由体素。
+    if (selected_frontier_id >= 0 &&
+        selected_frontier_id < static_cast<int>(ed_->points_.size())) {
+      add_backup_goal(ed_->points_[selected_frontier_id],
+                      ed_->yaws_[selected_frontier_id]);
+      const Frontier* sel_ftr = frontier_finder_->getFrontierById(selected_frontier_id);
+      if (sel_ftr != nullptr) {
+        add_backup_goal(sel_ftr->average_, ed_->yaws_[selected_frontier_id]);
+      }
+    }
   } else {
     int best = -1; double bc = 1e9;
     for (int fid : ed_->grid_frontier_ids_) {
@@ -1309,6 +1415,57 @@ int FastExplorationManager::planExploreMotion(
     }
   }
 
+  // [ABLATION] 本轮机制证据：选中目标的几何/结构/方向信息（L1），
+  // 以及“去掉结构项 / 去掉方向项是否会改变首目标”（L2）。
+  sel_tsp_order_ = selected_grid_order;
+  if (selected_frontier_id >= 0 &&
+      selected_frontier_id < static_cast<int>(ed_->points_.size())) {
+    const Vector3d tgt = ed_->points_[selected_frontier_id];
+    sel_straight_dist_ = (tgt - pos).norm();
+    const double euclid = std::max(sel_straight_dist_, 0.25);
+    const auto pl_it = candidate_start_path_lengths.find(selected_frontier_id);
+    const double plen = (pl_it != candidate_start_path_lengths.end())
+                            ? pl_it->second
+                            : sel_straight_dist_;
+    sel_path_stretch_ = plen / euclid;
+
+    // 跨墙判定：沿当前位置→目标直线等距采样，命中已知/膨胀占据即置 1
+    const int steps = std::max(2, static_cast<int>(std::ceil(sel_straight_dist_ / 0.1)));
+    int occ_hits = 0;
+    for (int s = 1; s < steps; ++s) {
+      const Vector3d p = pos + (tgt - pos) * (static_cast<double>(s) / steps);
+      Eigen::Vector3i idx;
+      sdf_map_->posToIndex(p, idx);
+      if (!sdf_map_->isInMap(idx)) continue;
+      if (sdf_map_->getInflateOccupancy(idx) == 1) { ++occ_hits; break; }
+    }
+    sel_crosses_wall_ = occ_hits > 0 ? 1 : 0;
+
+    const Frontier* sf = frontier_finder_->getFrontierById(selected_frontier_id);
+    if (sf != nullptr) {
+      sel_ray_term_ = sf->back_leak_ratio_;
+      sel_density_term_ = sf->back_obstacle_ratio_;
+      sel_structure_score_ = sf->bounded_pocket_score_;
+      sel_pocket_flag_ = sf->bounded_pocket_flag_ ? 1 : 0;
+      sel_pocket_score_ = sel_structure_score_;
+      const int sel_gid = grid_planner_->getGridContainingPoint(sf->average_);
+      sel_same_grid_other_component_ =
+          grid_planner_->componentAllowsFrontier(sel_gid, sf->average_, pos) ? 0 : 1;
+      if (has_next_grid && use_grid_guidance_) {
+        const double dv = std::max(0.5, (sf->average_ - next_grid_center).norm());
+        sel_gradient_ = std::min(2.0, 1.0 / (dv * dv));
+      } else {
+        sel_gradient_ = 0.0;
+      }
+    }
+  }
+  alt_changed_by_structure_ =
+      (cf_best_no_structure >= 0 && selected_frontier_id >= 0 &&
+       cf_best_no_structure != selected_frontier_id) ? 1 : 0;
+  alt_changed_by_guidance_ =
+      (cf_best_no_guidance >= 0 && selected_frontier_id >= 0 &&
+       cf_best_no_guidance != selected_frontier_id) ? 1 : 0;
+
   for (size_t i = 0; i < ed_->refined_points_.size(); ++i)
     ed_->refined_views_.push_back(
         ed_->refined_points_[i] + 2.0 * Vector3d(cos(refined_yaws[i]), sin(refined_yaws[i]), 0));
@@ -1330,7 +1487,19 @@ int FastExplorationManager::planExploreMotion(
   bool found_reachable_view = false;
   for (const auto& candidate : backup_view_goals) {
     planner_manager_->path_finder_->reset();
-    if (planner_manager_->path_finder_->search(pos, candidate.first) != Astar::REACH_END) {
+    const int astar_res = planner_manager_->path_finder_->search(pos, candidate.first);
+    if (astar_res != Astar::REACH_END) {
+      // [ABLATION][DIAG] 记录 A* 失败原因，便于区分“地图不通”与“目标不可达”
+      Eigen::Vector3i si, ti;
+      sdf_map_->posToIndex(pos, si);
+      sdf_map_->posToIndex(candidate.first, ti);
+      const bool t_in = sdf_map_->isInMap(ti);
+      ROS_WARN("[LocalTarget] astar_fail code=%d start_occ=%d start_inf=%d "
+               "target_in_map=%d target_occ=%d target_inf=%d",
+               astar_res, sdf_map_->getOccupancy(si),
+               sdf_map_->getInflateOccupancy(si), static_cast<int>(t_in),
+               t_in ? sdf_map_->getOccupancy(ti) : -9,
+               t_in ? sdf_map_->getInflateOccupancy(ti) : -9);
       continue;
     }
     ed_->path_next_goal_ = planner_manager_->path_finder_->getPath();

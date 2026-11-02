@@ -23,6 +23,16 @@
   <arg name="max_vel"/>
   <arg name="max_acc"/>
 
+  <!-- [ABLATION] 相机外参（机体 -> 相机）。Gazebo/mavros 用实测值；
+       点云仿真里 /pcl_render_node/sensor_pose 已是相机位姿，必须传单位变换。 -->
+  <arg name="sensor_offset_x" default="0.136153835"/>
+  <arg name="sensor_offset_y" default="0.000009665"/>
+  <arg name="sensor_offset_z" default="0.112718504"/>
+  <arg name="sensor_qx" default="-0.000014848"/>
+  <arg name="sensor_qy" default="0.174114948"/>
+  <arg name="sensor_qz" default="-0.000011898"/>
+  <arg name="sensor_qw" default="0.984725335"/>
+
   <!-- [ABLATION] 每次运行的独立日志目录；由外层 launch 传入 -->
   <arg name="log_dir" default="/home/djg/Data_debug"/>
 
@@ -72,13 +82,13 @@
     <param name="map_ros/skip_pixel" value="2"/>
     <!-- Measured from Gazebo /gazebo/get_link_state, expressed in base_link:
          p450_D435i_0::base_link -> D435i::camera_depth_frame. -->
-    <param name="map_ros/sensor_offset_x" value="0.136153835"/>
-    <param name="map_ros/sensor_offset_y" value="0.000009665"/>
-    <param name="map_ros/sensor_offset_z" value="0.112718504"/>
-    <param name="map_ros/sensor_qx" value="-0.000014848"/>
-    <param name="map_ros/sensor_qy" value="0.174114948"/>
-    <param name="map_ros/sensor_qz" value="-0.000011898"/>
-    <param name="map_ros/sensor_qw" value="0.984725335"/>
+    <param name="map_ros/sensor_offset_x" value="$(arg sensor_offset_x)"/>
+    <param name="map_ros/sensor_offset_y" value="$(arg sensor_offset_y)"/>
+    <param name="map_ros/sensor_offset_z" value="$(arg sensor_offset_z)"/>
+    <param name="map_ros/sensor_qx" value="$(arg sensor_qx)"/>
+    <param name="map_ros/sensor_qy" value="$(arg sensor_qy)"/>
+    <param name="map_ros/sensor_qz" value="$(arg sensor_qz)"/>
+    <param name="map_ros/sensor_qw" value="$(arg sensor_qw)"/>
     <param name="map_ros/esdf_slice_height" value="0.3"/>
     <param name="map_ros/visualization_truncate_height"   value="10.09"/>
     <param name="map_ros/visualization_truncate_low"   value="-2.0"/>
