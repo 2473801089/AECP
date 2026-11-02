@@ -231,7 +231,7 @@
          structural integration does not retune its weight. -->
     <param name="exploration/local_pocket_weight" value="0.8" type="double"/>
     <!-- [ABLATION] 下一待访问网格方向引导开关：false 时起始代价中的方向项恒为 0 -->
-    <param name="exploration/use_grid_guidance" value="true" type="bool"/>
+    <param name="exploration/use_grid_guidance" value="false" type="bool"/>
     <param name="exploration/local_tsp_cost_log_path" value="$(arg log_dir)/local_tsp_cost_log.csv" type="string"/>
     <param name="exploration/enable_decision_trace_log" value="true" type="bool"/>
     <param name="exploration/decision_trace_log_path" value="$(arg log_dir)/decision_trace_log.csv" type="string"/>
