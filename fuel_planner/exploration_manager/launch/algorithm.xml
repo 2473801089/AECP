@@ -278,7 +278,7 @@
     <param name="frontier/enable_structure_eval" value="true" type="bool"/>
     <!-- [ABLATION] 受限结构评分中后向射线项权重 alpha，式(11) Cr = alpha*ray + (1-alpha)*density
          0.7=基线（与改动前硬编码一致）；1.0=仅后向射线；0.0=仅邻域障碍密度 -->
-    <param name="frontier/alpha" value="0.7" type="double"/>
+    <param name="frontier/alpha" value="1.0" type="double"/>
 
     <!-- V10 路径膨胀覆盖参数 -->
     <param name="frontier/inflate_radius" value="5.5" type="double"/>
